@@ -1,0 +1,164 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Producto;
+use App\Models\Almacen;
+use App\Models\TransferenciasAlmacen;
+use App\Models\UbicacionProducto;
+use Illuminate\Http\Request;
+
+class TransferenciasAlmacenController extends Controller
+{
+    /**
+     * Display a listing of the transferencias de productos entre almacenes.
+     */
+    public function index()
+    {
+        $transferencias = TransferenciasAlmacen::all();
+        return view('transferencias.index', compact('transferencias'));
+    }
+
+    /**
+     * Handle product transfer between warehouses.
+     */
+    public function transferirProductos(Request $request)
+    {
+        $productoId = $request->producto_id;
+        $cantidad = $request->cantidad;
+        $almacenOrigenId = $request->almacen_origen_id;
+        $almacenDestinoId = $request->almacen_destino_id;
+
+        if ($almacenOrigenId == $almacenDestinoId) {
+            return response()->json(['error' => 'No puedes transferir productos entre el mismo almacén.']);
+        }
+
+        $ubicacionOrigen = UbicacionProducto::where('producto_id', $productoId)
+                                            ->where('almacen_id', $almacenOrigenId)
+                                            ->first();
+
+        $ubicacionDestino = UbicacionProducto::where('producto_id', $productoId)
+                                             ->where('almacen_id', $almacenDestinoId)
+                                             ->first();
+
+        if ($ubicacionOrigen && $ubicacionOrigen->cantidad >= $cantidad) {
+            $ubicacionOrigen->cantidad -= $cantidad;
+            $ubicacionOrigen->save();
+
+            if ($ubicacionDestino) {
+                $ubicacionDestino->cantidad += $cantidad;
+                $ubicacionDestino->save();
+            } else {
+                UbicacionProducto::create([
+                    'producto_id' => $productoId,
+                    'almacen_id' => $almacenDestinoId,
+                    'cantidad' => $cantidad,
+                    'pasillo' => $request->pasillo, 
+                    'estanteria' => $request->estanteria 
+                ]);
+            }
+
+            TransferenciasAlmacen::create([
+                'producto_id' => $productoId,
+                'almacen_origen_id' => $almacenOrigenId,
+                'almacen_destino_id' => $almacenDestinoId,
+                'cantidad' => $cantidad,
+                'fecha_transferencia' => now(),
+            ]);
+
+            return response()->json(['success' => 'Transferencia realizada con éxito.']);
+        } else {
+            return response()->json(['error' => 'No hay suficiente cantidad en el almacén de origen.']);
+        }
+    }
+
+    /**
+     * Show the form for creating a new transferencia de producto.
+     */
+    public function create()
+    {
+        $productos = Producto::all();
+        $almacenes = Almacen::all();
+        return view('transferencias.create', compact('productos', 'almacenes'));
+    }
+
+    /**
+     * Store a newly created transferencia de producto in storage.
+     */
+    public function store(Request $request)
+    {
+        $request->validate([
+            'producto_id' => 'required|exists:productos,id',
+            'almacen_origen_id' => 'required|exists:almacenes,id',
+            'almacen_destino_id' => 'required|exists:almacenes,id',
+            'cantidad' => 'required|integer|min:1',
+        ]);
+
+        $productoId = $request->producto_id;
+        $almacenOrigenId = $request->almacen_origen_id;
+        $cantidad = $request->cantidad;
+
+        $ubicacionOrigen = UbicacionProducto::where('producto_id', $productoId)
+                                            ->where('almacen_id', $almacenOrigenId)
+                                            ->first();
+
+        if (!$ubicacionOrigen || $ubicacionOrigen->cantidad < $cantidad) {
+            return redirect()->route('transferencias.index')->with('error', 'No hay suficiente cantidad en el almacén de origen.');
+        }
+
+        TransferenciasAlmacen::create([
+            'producto_id' => $request->producto_id,
+            'almacen_origen_id' => $request->almacen_origen_id,
+            'almacen_destino_id' => $request->almacen_destino_id,
+            'cantidad' => $request->cantidad,
+            'fecha_transferencia' => now(),
+        ]);
+
+        return redirect()->route('transferencias.index')->with('success', 'Transferencia realizada con éxito');
+    }
+
+    /**
+     * Show the form for editing the specified transferencia de producto.
+     */
+    public function edit(TransferenciasAlmacen $transferencia)
+    {
+        $productos = Producto::all();
+        $almacenes = Almacen::all();
+        return view('transferencias.edit', compact('transferencia', 'productos', 'almacenes'));
+    }
+
+    /**
+     * Update the specified transferencia de producto in storage.
+     */
+    public function update(Request $request, TransferenciasAlmacen $transferencia)
+    {
+        $request->validate([
+            'producto_id' => 'required|exists:productos,id',
+            'almacen_origen_id' => 'required|exists:almacenes,id',
+            'almacen_destino_id' => 'required|exists:almacenes,id',
+            'cantidad' => 'required|integer|min:1',
+        ]);
+
+        $transferencia->update([
+            'producto_id' => $request->producto_id,
+            'almacen_origen_id' => $request->almacen_origen_id,
+            'almacen_destino_id' => $request->almacen_destino_id,
+            'cantidad' => $request->cantidad,
+        ]);
+
+        return redirect()->route('transferencias.index')->with('success', 'Transferencia actualizada con éxito');
+    }
+
+    /**
+     * Remove the specified transferencia de producto from storage.
+     */
+    public function destroy(TransferenciasAlmacen $transferencia)
+    {
+        try {
+            $transferencia->delete();
+            return redirect()->route('transferencias.index')->with('success', 'Transferencia eliminada con éxito');
+        } catch (\Exception $e) {
+            return redirect()->route('transferencias.index')->with('error', 'No se pudo eliminar la transferencia.');
+        }
+    }
+}
